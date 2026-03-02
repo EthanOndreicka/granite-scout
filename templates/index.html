@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>AI Baseball Matchup Analyzer</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+
+<!-- ── Header ── -->
+<header>
+  <div class="header-logo">
+    <div class="header-ball-icon">
+      <svg viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="9"/>
+        <path d="M9 3.5C9 3.5 9.5 8 7.5 12S5 20.5 5 20.5"/>
+        <path d="M15 3.5C15 3.5 14.5 8 16.5 12S19 20.5 19 20.5"/>
+      </svg>
+    </div>
+    <div class="header-text">
+      <h1>AI Baseball Matchup Analyzer</h1>
+      <p>Real-time odds &amp; MLB / WBC data</p>
+    </div>
+  </div>
+  <div class="header-badges">
+    <div class="brand-badge">
+      <img src="https://upload.wikimedia.org/wikipedia/commons/5/51/IBM_logo.svg" alt="IBM" title="IBM" />
+      <div class="brand-badge-divider"></div>
+      <span class="watsonx-text">watsonx.ai</span>
+    </div>
+  </div>
+</header>
+
+<!-- ── Main ── -->
+<div class="container">
+
+  <div class="top-row">
+    <div class="date-bar" id="date-bar">Loading schedule&hellip;</div>
+    <div class="status-pill" id="status-pill">
+      <span class="status-dot loading" id="status-dot"></span>
+      <span id="status-text">Initializing&hellip;</span>
+    </div>
+  </div>
+
+  <div class="sport-tabs">
+    <button class="sport-tab active" data-sport="mlb" onclick="switchTab('mlb')">MLB</button>
+    <button class="sport-tab" data-sport="wbc" onclick="switchTab('wbc')">WBC</button>
+  </div>
+
+  <div id="mlb-section">
+    <div class="loading-msg"><span class="spinner"></span> Fetching today's MLB schedule&hellip;</div>
+  </div>
+
+  <div id="wbc-section" style="display:none">
+    <div class="loading-msg"><span class="spinner"></span> Fetching WBC schedule&hellip;</div>
+  </div>
+</div>
+
+<!-- ── Chat FAB (pill) ── -->
+<button class="chat-fab" id="chat-fab" onclick="toggleChat()">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+       stroke-linecap="round" stroke-linejoin="round">
+    <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
+  </svg>
+  Ask Watson
+  <span class="chat-fab-badge">AI</span>
+</button>
+
+<!-- ── Chat Panel ── -->
+<div class="chat-panel" id="chat-panel">
+  <div class="chat-header">
+    <div class="chat-header-left">
+      <span>Ask Watson</span>
+      <span class="chat-badge">watsonx.ai</span>
+    </div>
+    <button class="chat-close-btn" onclick="toggleChat()">&times;</button>
+  </div>
+  <div class="chat-messages" id="chat-messages">
+    <div class="chat-msg assistant">
+      What do you want to know? Ask me about today's games, player predictions, matchup breakdowns, or betting analysis.
+    </div>
+  </div>
+  <div class="chat-input-row">
+    <input type="text" class="chat-input" id="chat-input"
+           placeholder="e.g. Will Paul Skenes get 6 Ks today?"
+           onkeydown="if(event.key==='Enter')sendChat()" />
+    <button class="chat-send-btn" id="chat-send-btn" onclick="sendChat()">Send</button>
+  </div>
+</div>
+
+<script>
+  /* ══════════════════════════════════════
+     Team colors (primary)
+     ══════════════════════════════════════ */
+  const TEAM_COLORS = {
+    // MLB
+    'ARI': '#A71930', 'ATL': '#CE1141', 'BAL': '#DF4601', 'BOS': '#BD3039',
+    'CHC': '#0E3386', 'CWS': '#27251F', 'CIN': '#C6011F', 'CLE': '#00385D',
+    'COL': '#333366', 'DET': '#0C2340', 'HOU': '#002D62', 'KC':  '#004687',
+    'LAA': '#BA0021', 'LAD': '#005A9C', 'MIA': '#00A3E0', 'MIL': '#12284B',
+    'MIN': '#002B5C', 'NYM': '#002D72', 'NYY': '#003087', 'OAK': '#003831',
+    'PHI': '#E81828', 'PIT': '#27251F', 'SD':  '#2F241D', 'SF':  '#FD5A1E',
+    'SEA': '#0C2C56', 'STL': '#C41E3A', 'TB':  '#092C5C', 'TEX': '#003278',
+    'TOR': '#134A8E', 'WSH': '#AB0003',
+    // Alternate abbreviations
+    'WSN': '#AB0003', 'CHW': '#27251F', 'AZ':  '#A71930',
+    // WBC national teams (best-effort)
+    'USA': '#002868', 'JPN': '#BC002D', 'KOR': '#003478', 'DOM': '#002D62',
+    'VEN': '#FFD100', 'CUB': '#002A8F', 'PUR': '#ED0A3F', 'MEX': '#006341',
+    'CAN': '#FF0000', 'COL': '#FCD116', 'NED': '#FF6600', 'TPE': '#0029A3',
+    'AUS': '#00843D', 'ITA': '#008C45', 'ISR': '#0038B8', 'GBR': '#012169',
+    'CZE': '#D7141A', 'PAN': '#D21034', 'NCA': '#0067C6', 'CHN': '#DE2910',
+  };
+
+  /* ── Helpers ── */
+  function logoUrl(abbrev) {
+    if (!abbrev) return '';
+    return `https://a.espncdn.com/combiner/i?img=/i/teamlogos/mlb/500/${abbrev.toLowerCase()}.png&h=72&w=72`;
+  }
+
+  function logoError(img) {
+    const ph = document.createElement('div');
+    ph.className = 'team-logo-placeholder';
+    img.replaceWith(ph);
+  }
+
+  function hexToRgba(hex, a) {
+    const r = parseInt(hex.slice(1,3), 16);
+    const g = parseInt(hex.slice(3,5), 16);
+    const b = parseInt(hex.slice(5,7), 16);
+    return `rgba(${r},${g},${b},${a})`;
+  }
+
+  function escHtml(s) {
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  /* ══════════════════════════════════════
+     State
+     ══════════════════════════════════════ */
+  let currentTab = 'mlb';
+  let pollTimer = null;
+  let chatHistory = [];
+
+  /* ── Tabs ── */
+  function switchTab(tab) {
+    currentTab = tab;
+    document.querySelectorAll('.sport-tab').forEach(b =>
+      b.classList.toggle('active', b.dataset.sport === tab));
+    document.getElementById('mlb-section').style.display = tab === 'mlb' ? '' : 'none';
+    document.getElementById('wbc-section').style.display = tab === 'wbc' ? '' : 'none';
+  }
+
+  /* ══════════════════════════════════════
+     Build game card
+     ══════════════════════════════════════ */
+  function buildCard(game) {
+    const awayLogo = logoUrl(game.away_team_abbrev);
+    const homeLogo = logoUrl(game.home_team_abbrev);
+
+    // Team color gradient
+    const awayColor = TEAM_COLORS[game.away_team_abbrev] || '#333';
+    const homeColor = TEAM_COLORS[game.home_team_abbrev] || '#333';
+    const gradStyle = `background:linear-gradient(to right,${hexToRgba(awayColor,1)},${hexToRgba(homeColor,1)})`;
+
+    // Odds
+    let oddsHtml = '';
+    if (game.odds) {
+      oddsHtml = '<div class="card-odds">' + Object.entries(game.odds).map(([team, price]) => {
+        const cls = price > 0 ? 'positive' : 'negative';
+        const sign = price > 0 ? '+' : '';
+        return `<div class="mini-odds">
+          <div class="mo-team">${team}</div>
+          <div class="mo-price ${cls}">${sign}${price}</div>
+        </div>`;
+      }).join('') + '</div>';
+    }
+
+    // Analysis
+    let analysisBody;
+    if (game.analysis) {
+      analysisBody = `<div class="card-analysis-text">${escHtml(game.analysis)}</div>`;
+    } else {
+      analysisBody = `<div class="card-analysis-loading"><span class="spinner"></span> Generating analysis&hellip;</div>`;
+    }
+
+    const toggleLabel = game.analysis ? 'View Analysis' : 'Analysis loading\u2026';
+
+    return `
+      <div class="game-card" data-gameid="${game.game_id}">
+        <div class="card-top" onclick="toggleAnalysis(this)">
+          <div class="card-gradient" style="${gradStyle}"></div>
+          <div class="matchup-header">
+            <div class="team-block">
+              <img class="team-logo" src="${awayLogo}" alt="${game.away_team}" onerror="logoError(this)" />
+              <div class="team-name">${game.away_team}</div>
+            </div>
+            <div class="vs-badge">@</div>
+            <div class="team-block">
+              <img class="team-logo" src="${homeLogo}" alt="${game.home_team}" onerror="logoError(this)" />
+              <div class="team-name">${game.home_team}</div>
+            </div>
+          </div>
+          <div class="pitcher-info">
+            <div class="pitcher-row"><span class="label">Away</span><span>${game.away_pitcher}</span></div>
+            <div class="pitcher-row"><span class="label">Home</span><span>${game.home_pitcher}</span></div>
+          </div>
+          ${oddsHtml}
+        </div>
+        <div class="card-toggle" onclick="toggleAnalysis(this)">
+          <span>${toggleLabel}</span>
+          <span class="chevron">&#9660;</span>
+        </div>
+        <div class="card-analysis">${analysisBody}</div>
+      </div>`;
+  }
+
+  /* ── Toggle card analysis ── */
+  function toggleAnalysis(el) {
+    const card = el.closest('.game-card');
+    const body = card.querySelector('.card-analysis');
+    const toggle = card.querySelector('.card-toggle');
+    const isOpen = body.classList.contains('open');
+    body.classList.toggle('open', !isOpen);
+    toggle.classList.toggle('open', !isOpen);
+  }
+
+  /* ══════════════════════════════════════
+     Render games
+     ══════════════════════════════════════ */
+  function renderGames(data) {
+    const mlbEl = document.getElementById('mlb-section');
+    if (data.mlb_games && data.mlb_games.length > 0) {
+      mlbEl.innerHTML = '<div class="games-grid">' + data.mlb_games.map(buildCard).join('') + '</div>';
+    } else {
+      mlbEl.innerHTML = '<div class="no-games"><h2>No MLB games scheduled today</h2><p>Check back on a game day.</p></div>';
+    }
+
+    const wbcEl = document.getElementById('wbc-section');
+    if (data.wbc_games && data.wbc_games.length > 0) {
+      wbcEl.innerHTML = '<div class="games-grid">' + data.wbc_games.map(buildCard).join('') + '</div>';
+    } else {
+      wbcEl.innerHTML = '<div class="no-games"><h2>No WBC games scheduled today</h2><p>Games appear here during the World Baseball Classic.</p></div>';
+    }
+  }
+
+  /* ── Status ── */
+  function updateStatus(data) {
+    const dot  = document.getElementById('status-dot');
+    const text = document.getElementById('status-text');
+
+    if (data.analysis_status === 'ready') {
+      dot.classList.remove('loading');
+      const n = data.total_count;
+      text.textContent = n > 0
+        ? `Analysis ready for ${n} game${n !== 1 ? 's' : ''}`
+        : 'No games to analyze';
+    } else if (data.analysis_status === 'generating') {
+      dot.classList.add('loading');
+      text.textContent = 'Generating analysis\u2026';
+    } else {
+      dot.classList.add('loading');
+      text.textContent = 'Initializing\u2026';
+    }
+  }
+
+  /* ══════════════════════════════════════
+     Load + poll
+     ══════════════════════════════════════ */
+  async function loadGames() {
+    try {
+      const res = await fetch('/api/games');
+      const data = await res.json();
+
+      document.getElementById('date-bar').textContent = `Today's Games \u2014 ${data.date}`;
+      renderGames(data);
+      updateStatus(data);
+
+      if (data.analysis_status !== 'ready' && !pollTimer) {
+        pollTimer = setInterval(async () => {
+          try {
+            const r = await fetch('/api/games');
+            const d = await r.json();
+            renderGames(d);
+            updateStatus(d);
+            if (d.analysis_status === 'ready') {
+              clearInterval(pollTimer);
+              pollTimer = null;
+            }
+          } catch (_) {}
+        }, 6000);
+      }
+    } catch (err) {
+      document.getElementById('mlb-section').innerHTML =
+        `<div class="no-games"><h2>Error loading games</h2><p>${err.message}</p></div>`;
+    }
+  }
+
+  /* ══════════════════════════════════════
+     Chat
+     ══════════════════════════════════════ */
+  function toggleChat() {
+    const panel = document.getElementById('chat-panel');
+    panel.classList.toggle('open');
+    if (panel.classList.contains('open')) {
+      document.getElementById('chat-input').focus();
+    }
+  }
+
+  async function sendChat() {
+    const input = document.getElementById('chat-input');
+    const msg = input.value.trim();
+    if (!msg) return;
+
+    input.value = '';
+    appendChat('user', msg);
+    chatHistory.push({ role: 'user', content: msg });
+
+    const typingEl = appendChat('assistant typing', 'Thinking\u2026');
+    const sendBtn = document.getElementById('chat-send-btn');
+    sendBtn.disabled = true;
+
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: msg, history: chatHistory })
+      });
+      const data = await res.json();
+      typingEl.remove();
+
+      const reply = data.response || data.error || 'No response.';
+      appendChat('assistant', reply);
+      chatHistory.push({ role: 'assistant', content: reply });
+    } catch (err) {
+      typingEl.remove();
+      appendChat('assistant', 'Sorry, something went wrong. Please try again.');
+    }
+
+    sendBtn.disabled = false;
+    input.focus();
+  }
+
+  function appendChat(cls, text) {
+    const container = document.getElementById('chat-messages');
+    const div = document.createElement('div');
+    div.className = `chat-msg ${cls}`;
+    div.textContent = text;
+    container.appendChild(div);
+    container.scrollTop = container.scrollHeight;
+    return div;
+  }
+
+  /* ── Init ── */
+  loadGames();
+</script>
+</body>
+</html>
